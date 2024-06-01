@@ -1,10 +1,14 @@
 import streamlit as st
 import pandas as pd
 from docx import Document
-from io import BytesIO
-import requests
+import openai
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from io import BytesIO
+import requests
+
+# Initialize OpenAI API key
+openai.api_key = "sk-proj-vQk9SyZY9GOSxm09KWxtT3BlbkFJBhTI29nx4Y13rZZ3GbDs"
 
 # Function to parse and print tables from the document
 def parse_and_print_tables(doc):
@@ -152,17 +156,17 @@ def main():
 
             timesheet_file = st.file_uploader("1. Upload Sample Timesheet Report.xlsx", type="xlsx", key="timesheet")
             funding_file = st.file_uploader("2. Upload Sample Funding Status.xlsx", type="xlsx", key="funding")
-
-            # Download the report file from the GitHub repository
-            report_file_url = "https://github.com/nrjunejo/report-streamlit-app/raw/main/SAMPLE%20REPORT.docx"
-            report_response = requests.get(report_file_url)
-            report_bytes = BytesIO(report_response.content)
-            report_file = report_bytes if report_response.status_code == 200 else None
+            
+            # Removed the file uploader for SAMPLE REPORT.docx and replaced it with loading from URL
+            url = "https://github.com/nrjunejo/report-streamlit-app/blob/main/SAMPLE%20REPORT.docx?raw=true"
+            response = requests.get(url)
+            report_file = BytesIO(response.content)
 
             month = st.text_input("Enter the month:", key="month")
             year = st.text_input("Enter the year:", key="year")
+
             if st.button("Update Report"):
-                if timesheet_file and funding_file and report_response.status_code == 200 and month and year:
+                if timesheet_file and funding_file and report_file and month and year:
                     excel_sheet1 = pd.read_excel(timesheet_file)
                     excel_sheet2 = pd.read_excel(funding_file)
                     doc = Document(report_file)
@@ -180,7 +184,89 @@ def main():
                     table = doc.tables[1]
                     update_table_column_with_values(table, 3, table2_column4_values, table_index=2)
 
-                    # Add your table updating code here
+                    pas_hours_value = excel_sheet1.iloc[26, 1]
+                    pas_backup_hours_value = excel_sheet1.iloc[27, 1]
+                    total_hours_value = excel_sheet1.iloc[26:28, 1].sum()
+
+                    table3 = doc.tables[2]
+                    num_shifts = sum(1 for row in table3.rows[1:] if row.cells[4].text.strip() == '2')
+
+                    updated_column2_text = f"PAS Assistance Scheduled and provided in {new_month} {new_year} for employee work location at White House Campus.\nPAS Hours = {pas_hours_value}\nPAS Backup Hours = {pas_backup_hours_value}\nTotal Hours= {total_hours_value}\n*Backup = first 2 Hours per {num_shifts} shift"
+                    table = doc.tables[0]
+                    update_table_column_with_values(table, 1, updated_column2_text.split('\n'))
+
+                    date_range_text = f"{new_month} 1st {new_year} thru {new_month} 30th {new_year}\n{pas_hours_value} (PAS) + {pas_backup_hours_value} (Backup)=\n{total_hours_value} Hours"
+                    date_range_lines = date_range_text.split('\n')
+                    update_table_column_with_values(table, 3, date_range_lines, start_row=1)
+
+                    table4_values = excel_sheet1.iloc[26:31, 1].values.tolist()
+                    table = doc.tables[3]
+                    update_table_column_with_values(table, 1, table4_values, start_row=1)
+
+                    table5_values = excel_sheet2.iloc[3:, :7].dropna(how='all').values.tolist()
+                    table = doc.tables[4]
+                    num_rows_to_add = len(table5_values) - (len(table.rows) - 1)
+                    if num_rows_to_add > 0:
+                        for _ in range(num_rows_to_add):
+                            table.add_row()
+
+                    for i, row_values in enumerate(table5_values):
+                        for j, value in enumerate(row_values):
+                            cell = table.cell(i+1, j)
+                            if j == 6:
+                                formatted_value = f"{value * 100:.0f}%" if pd.notna(value) else ''
+                            else:
+                                formatted_value = format_cell_value(value, j)
+                            cell.text = formatted_value
+                            cell.width = cell.width
+                            cell.paragraphs[0].alignment = cell.paragraphs[0].alignment
+
+                    for j, header in enumerate(table.rows[0].cells):
+                        for paragraph in header.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.bold = True
+
+                    table = doc.tables[2]
+                    for row in table.rows[:]:
+                        table._element.remove(row._element)
+                    num_rows_to_add = 27
+                    for _ in range(num_rows_to_add):
+                        table.add_row()
+
+                    headers = ['DAY OF SERVICE', 'DATE OF SERVICE PROVIDED', 'SHIFT START', 'SHIFT END', 'HOURS']
+                    for j, header in enumerate(headers):
+                        cell = table.cell(0, j)
+                        cell.text = header
+                        set_cell_border(cell, top={"w:val": "single", "w:sz": "4"}, bottom={"w:val": "single", "w:sz": "4"},
+                                        left={"w:val": "single", "w:sz": "4"}, right={"w:val": "single", "w:sz": "4"})
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.bold = True
+
+                    table3_values = excel_sheet1.iloc[0:25, :5].values.tolist()
+                    for i, row_values in enumerate(table3_values):
+                        for j, value in enumerate(row_values):
+                            if (i + 1) < len(table.rows) and j < len(table.columns):
+                                cell = table.cell(i + 1, j)
+                                if j == 1:
+                                    try:
+                                        formatted_value = pd.to_datetime(value).strftime('%m/%d/%Y') if not pd.isna(value) else ''
+                                    except (ValueError, TypeError):
+                                        formatted_value = str(value)
+                                elif j == 4:
+                                    try:
+                                        formatted_value = f"{int(value):,d}"
+                                    except ValueError:
+                                        formatted_value = str(value)
+                                else:
+                                    formatted_value = format_cell_value(value, j)
+                                cell.text = formatted_value
+                                set_cell_border(cell, top={"w:val": "single", "w:sz": "4"}, bottom={"w:val": "single", "w:sz": "4"},
+                                                left={"w:val": "single", "w:sz": "4"}, right={"w:val": "single", "w:sz": "4"})
+                                cell.width = cell.width
+                                cell.paragraphs[0].alignment = cell.paragraphs[0].alignment
+                            else:
+                                st.write(f"Skipping value at row {i + 1}, column {j} - out of bounds")
 
                     doc.save("Updated_SAMPLE_REPORT.docx")
                     st.success("Report updated successfully!")
