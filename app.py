@@ -161,7 +161,7 @@ def main():
 
             month = st.text_input("Enter the month:", key="month")
             year = st.text_input("Enter the year:", key="year")
-                        if st.button("Update Report"):
+            if st.button("Update Report"):
                 if timesheet_file and funding_file and report_response.status_code == 200 and month and year:
                     excel_sheet1 = pd.read_excel(timesheet_file)
                     excel_sheet2 = pd.read_excel(funding_file)
